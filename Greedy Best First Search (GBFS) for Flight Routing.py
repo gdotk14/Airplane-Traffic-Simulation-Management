@@ -9,253 +9,223 @@ Challenge: Define a heuristic for congestion and route proximity and handle sudd
 Extension: Handles emergency situations like medical diversions or restricted airspace
 """
 
+import networkx as nx
+import matplotlib.pyplot as plt
 import heapq
 import random
-import math
 
-class AirspaceNode:
-    """Represents a point in the airspace."""
-    def __init__(self, id, x, y, altitude, congestion=0):
-        self.id = id
-        self.x = x
-        self.y = y
-        self.altitude = altitude
-        self.congestion = congestion  # 0-10 scale of air traffic congestion
-        self.restricted = False
-        self.weather_severity = 0  # 0-10 scale of weather severity
-        
-    def distance_to(self, other):
-        """Calculate Euclidean distance to another node."""
-        return math.sqrt((self.x - other.x)**2 + (self.y - other.y)**2 + (self.altitude - other.altitude)**2)
+class FlightNode:
+    def __init__(self, name, x, y, congestion=0):
+        self.name = name
+        self.x = x  # x-coordinate (for visualization and distance calculation)
+        self.y = y  # y-coordinate
+        self.congestion = congestion  # air traffic congestion level (0-10)
     
-    def __str__(self):
-        return f"Node {self.id} at ({self.x}, {self.y}, {self.altitude})"
+    def __lt__(self, other):
+        # For priority queue comparison
+        return True
 
-class AirTrafficGraph:
-    """Represents the airspace as a graph of connected nodes."""
-    def __init__(self):
-        self.nodes = {}
-        self.edges = {}
-        self.emergency_zones = set()  # Set of node IDs with emergencies
-        
-    def add_node(self, node):
-        """Add a node to the graph."""
-        self.nodes[node.id] = node
-        if node.id not in self.edges:
-            self.edges[node.id] = []
-            
-    def add_edge(self, node1_id, node2_id, weight=1):
-        """Add a bidirectional edge between two nodes."""
-        if node1_id in self.nodes and node2_id in self.nodes:
-            self.edges[node1_id].append((node2_id, weight))
-            self.edges[node2_id].append((node1_id, weight))
-    
-    def get_neighbors(self, node_id):
-        """Get all neighboring nodes of a given node."""
-        return self.edges[node_id]
-    
-    def update_congestion(self, node_id, new_congestion):
-        """Update congestion level of a node."""
-        if node_id in self.nodes:
-            self.nodes[node_id].congestion = new_congestion
-    
-    def declare_emergency(self, node_id):
-        """Declare an emergency at a node (e.g., medical diversion needed)."""
-        self.emergency_zones.add(node_id)
-    
-    def resolve_emergency(self, node_id):
-        """Resolve an emergency at a node."""
-        if node_id in self.emergency_zones:
-            self.emergency_zones.remove(node_id)
-    
-    def set_restricted(self, node_id, is_restricted=True):
-        """Set airspace as restricted or unrestricted."""
-        if node_id in self.nodes:
-            self.nodes[node_id].restricted = is_restricted
-    
-    def update_weather(self, node_id, severity):
-        """Update weather severity at a node."""
-        if node_id in self.nodes:
-            self.nodes[node_id].weather_severity = severity
+def euclidean_distance(node1, node2):
+    """Calculate straight-line distance between two nodes"""
+    return ((node1.x - node2.x) ** 2 + (node1.y - node2.y) ** 2) ** 0.5
 
-def heuristic(current, goal, graph):
+def heuristic(current, goal, congestion_weight=0.5):
     """
-    Heuristic function for GBFS that considers:
-    1. Direct distance to goal
-    2. Congestion at the current node
-    3. Weather severity
-    4. Emergency status
-    5. Restricted airspace
+    Calculate heuristic value based on:
+    1. Distance to goal
+    2. Current node's congestion
     
-    Lower values are better.
+    Lower values are better (less distance, less congestion)
     """
-    current_node = graph.nodes[current]
-    goal_node = graph.nodes[goal]
-    
-    # Base heuristic is distance to goal
-    h = current_node.distance_to(goal_node)
-    
-    # Add penalty for congestion (higher congestion = higher cost)
-    h += current_node.congestion * 5
-    
-    # Add penalty for bad weather
-    h += current_node.weather_severity * 8
-    
-    # High penalty for restricted airspace
-    if current_node.restricted:
-        h += 1000
-    
-    # Check if node is in an emergency zone
-    if current in graph.emergency_zones:
-        h += 500  # Add penalty for emergency zones
-    
-    return h
+    distance = euclidean_distance(current, goal)
+    return distance + (congestion_weight * current.congestion)
 
 def greedy_best_first_search(graph, start, goal):
     """
-    Implements Greedy Best First Search algorithm for flight routing.
-    
-    Args:
-        graph: The airspace graph
-        start: Starting node ID
-        goal: Goal node ID
-    
-    Returns:
-        List of node IDs representing the path from start to goal
+    Implement Greedy Best First Search algorithm
+    Returns the path from start to goal if found, otherwise None
     """
-    # Priority queue for open nodes
-    open_set = [(heuristic(start, goal, graph), start)]
-    heapq.heapify(open_set)
+    # Priority queue for open nodes (nodes to visit)
+    open_list = [(heuristic(start, goal), start)]
+    heapq.heapify(open_list)
     
-    # Set to track closed nodes
+    # Closed set for visited nodes
     closed_set = set()
     
-    # Dictionary to keep track of parent nodes for path reconstruction
-    came_from = {start: None}
+    # Parent dictionary to reconstruct path
+    parent = {start.name: None}
     
-    while open_set:
+    while open_list:
         # Get node with lowest heuristic value
-        _, current = heapq.heappop(open_set)
+        _, current = heapq.heappop(open_list)
         
-        # Check if we've reached the goal
-        if current == goal:
-            # Reconstruct and return the path
+        # If goal is reached, reconstruct and return the path
+        if current.name == goal.name:
             path = []
             while current:
-                path.append(current)
-                current = came_from[current]
-            return path[::-1]  # Reverse to get path from start to goal
+                path.append(current.name)
+                current_name = parent.get(current.name)
+                current = next((n for n in graph.nodes() if n.name == current_name), None)
+            return path[::-1]  # Reverse path to get from start to goal
         
-        # Add current node to closed set
-        closed_set.add(current)
+        # Mark current node as visited
+        closed_set.add(current.name)
         
-        # Explore neighbors
-        for neighbor, _ in graph.get_neighbors(current):
-            if neighbor in closed_set:
+        # Check neighbors
+        for neighbor in graph.neighbors(current):
+            if neighbor.name in closed_set:
                 continue
                 
-            # If neighbor is not in came_from, it's not yet explored
-            if neighbor not in came_from:
-                came_from[neighbor] = current
-                h = heuristic(neighbor, goal, graph)
-                heapq.heappush(open_set, (h, neighbor))
+            # If neighbor is not in closed set and not in open list
+            if not any(n[1].name == neighbor.name for n in open_list):
+                parent[neighbor.name] = current.name
+                heapq.heappush(open_list, (heuristic(neighbor, goal), neighbor))
     
     # No path found
     return None
 
-def generate_large_airspace_graph(num_nodes=100, connectivity=0.1):
-    """
-    Generate a large airspace graph for testing.
+def create_flight_network():
+    """Create a flight network with airports as nodes"""
+    # Create nodes (airports)
+    airports = [
+        FlightNode("JFK", 80, 65, congestion=8),   # New York
+        FlightNode("LAX", 20, 60, congestion=9),   # Los Angeles
+        FlightNode("ORD", 55, 70, congestion=7),   # Chicago
+        FlightNode("DFW", 45, 45, congestion=5),   # Dallas
+        FlightNode("MIA", 70, 30, congestion=6),   # Miami
+        FlightNode("SEA", 15, 85, congestion=4),   # Seattle
+        FlightNode("DEN", 40, 60, congestion=3),   # Denver
+    ]
     
-    Args:
-        num_nodes: Number of nodes in the graph
-        connectivity: Probability of edge between nodes (0-1)
+    # Create graph
+    G = nx.Graph()
     
-    Returns:
-        AirTrafficGraph object
-    """
-    graph = AirTrafficGraph()
+    # Add nodes to graph
+    for airport in airports:
+        G.add_node(airport)
     
-    # Create nodes
-    for i in range(num_nodes):
-        x = random.uniform(0, 1000)  # x-coordinate (nautical miles)
-        y = random.uniform(0, 1000)  # y-coordinate (nautical miles)
-        altitude = random.uniform(150, 450)  # altitude (100s of feet)
-        congestion = random.uniform(0, 10)  # random congestion level
-        node = AirspaceNode(i, x, y, altitude, congestion)
-        
-        # Randomly set some nodes as restricted
-        if random.random() < 0.05:  # 5% chance of restricted airspace
-            node.restricted = True
-            
-        # Randomly set weather severity
-        node.weather_severity = random.uniform(0, 10)
-        
-        graph.add_node(node)
+    # Add edges (flight routes)
+    # Not all airports are connected directly
+    G.add_edge(airports[0], airports[2])  # JFK - ORD
+    G.add_edge(airports[0], airports[4])  # JFK - MIA
+    G.add_edge(airports[1], airports[3])  # LAX - DFW
+    G.add_edge(airports[1], airports[5])  # LAX - SEA
+    G.add_edge(airports[1], airports[6])  # LAX - DEN
+    G.add_edge(airports[2], airports[3])  # ORD - DFW
+    G.add_edge(airports[2], airports[6])  # ORD - DEN
+    G.add_edge(airports[3], airports[4])  # DFW - MIA
+    G.add_edge(airports[3], airports[6])  # DFW - DEN
+    G.add_edge(airports[5], airports[6])  # SEA - DEN
     
-    # Create edges (connections between nodes)
-    for i in range(num_nodes):
-        for j in range(i+1, num_nodes):
-            if random.random() < connectivity:
-                # Calculate distance between nodes as edge weight
-                distance = graph.nodes[i].distance_to(graph.nodes[j])
-                graph.add_edge(i, j, distance)
+    return G, airports
+
+def visualize_graph(G, path=None, emergency=None):
+    """Visualize the flight network and the selected path"""
+    plt.figure(figsize=(12, 8))
     
-    # Add some emergency zones
-    for _ in range(int(num_nodes * 0.02)):  # 2% of nodes are emergency zones
-        emergency_node = random.randint(0, num_nodes-1)
-        graph.declare_emergency(emergency_node)
-        
-    return graph
+    # Create positions for nodes based on their coordinates
+    pos = {node: (node.x, node.y) for node in G.nodes()}
+    
+    # Create node labels
+    labels = {node: f"{node.name}\nCong: {node.congestion}" for node in G.nodes()}
+    
+    # Node colors based on congestion (red = high congestion, green = low)
+    node_colors = ['#%02x%02x%02x' % (min(255, 50 + 20 * node.congestion), 
+                                     max(50, 255 - 20 * node.congestion), 
+                                     50) for node in G.nodes()]
+    
+    # Draw the graph - nodes
+    nx.draw_networkx_nodes(G, pos, node_color=node_colors, node_size=700, alpha=0.8)
+    
+    # Highlight emergency node if exists
+    if emergency:
+        nx.draw_networkx_nodes(G, pos, nodelist=[emergency], 
+                              node_color='purple', node_size=800, alpha=0.9)
+    
+    # Draw edges
+    nx.draw_networkx_edges(G, pos, width=1.5, alpha=0.5)
+    
+    # Highlight path edges if provided
+    if path and len(path) > 1:
+        path_edges = [(next(n for n in G.nodes() if n.name == path[i]), 
+                       next(n for n in G.nodes() if n.name == path[i+1])) 
+                      for i in range(len(path)-1)]
+        nx.draw_networkx_edges(G, pos, edgelist=path_edges, 
+                              width=3, edge_color='blue', alpha=1.0)
+    
+    # Draw labels
+    nx.draw_networkx_labels(G, pos, labels=labels, font_size=10, font_weight='bold')
+    
+    # Set title and show the plot
+    plt.title("Flight Routing Network - Greedy Best First Search", fontsize=15)
+    plt.axis('off')
+    plt.tight_layout()
+    return plt
+
+def handle_emergency(G, current_path, emergency_node, start, goal):
+    """Handle emergency situation by rerouting"""
+    print(f"\nEMERGENCY at {emergency_node.name}! Rerouting...")
+    
+    # Temporarily increase congestion at emergency node
+    original_congestion = emergency_node.congestion
+    emergency_node.congestion = 10  # Maximum congestion
+    
+    # Find the current position in the path
+    current_pos = current_path.index(start.name) if start.name in current_path else 0
+    
+    # If we've already passed the emergency node, continue on current path
+    if emergency_node.name in current_path and current_path.index(emergency_node.name) < current_pos:
+        return current_path
+    
+    # Create a new path avoiding the emergency node
+    new_path = greedy_best_first_search(G, start, goal)
+    
+    # Reset congestion after planning
+    emergency_node.congestion = original_congestion
+    
+    return new_path
 
 def main():
-    """Main function to test the GBFS implementation."""
-    # Generate a large airspace graph
-    print("Generating airspace graph...")
-    graph = generate_large_airspace_graph(num_nodes=150, connectivity=0.15)
+    # Create flight network
+    G, airports = create_flight_network()
     
-    # Select random start and goal nodes
-    start_node = random.choice(list(graph.nodes.keys()))
-    goal_node = random.choice(list(graph.nodes.keys()))
-    while goal_node == start_node:  # Ensure start and goal are different
-        goal_node = random.choice(list(graph.nodes.keys()))
+    # Define start and goal airports
+    start_airport = next(a for a in airports if a.name == "JFK")
+    goal_airport = next(a for a in airports if a.name == "LAX")
     
-    print(f"Finding route from Node {start_node} to Node {goal_node}...")
+    print("Airport Network:")
+    for a in airports:
+        print(f"{a.name}: Congestion level {a.congestion}")
     
-    # Run GBFS
-    path = greedy_best_first_search(graph, start_node, goal_node)
+    print("\nFinding optimal route from", start_airport.name, "to", goal_airport.name)
+    
+    # Run Greedy Best First Search
+    path = greedy_best_first_search(G, start_airport, goal_airport)
     
     if path:
-        print(f"Path found: {path}")
-        print(f"Path length: {len(path)} nodes")
+        print("Optimal path found:", " -> ".join(path))
         
-        # Calculate total distance
-        total_distance = 0
-        for i in range(len(path) - 1):
-            node1 = graph.nodes[path[i]]
-            node2 = graph.nodes[path[i + 1]]
-            total_distance += node1.distance_to(node2)
+        # Visualize the graph and path
+        plt1 = visualize_graph(G, path)
+        plt1.savefig('flight_route.png')
         
-        print(f"Total distance: {total_distance:.2f} units")
+        # Simulate emergency situation
+        emergency_airport = next(a for a in airports if a.name == "DEN")  # Denver has emergency
         
-        # Print details of each node in the path
-        print("\nPath details:")
-        for node_id in path:
-            node = graph.nodes[node_id]
-            status = []
-            if node.restricted:
-                status.append("RESTRICTED")
-            if node_id in graph.emergency_zones:
-                status.append("EMERGENCY")
-            if node.congestion > 7:
-                status.append("HIGH CONGESTION")
-            if node.weather_severity > 7:
-                status.append("SEVERE WEATHER")
-            
-            status_str = ", ".join(status) if status else "Normal"
-            print(f"Node {node_id}: Congestion={node.congestion:.1f}, Weather={node.weather_severity:.1f}, Status={status_str}")
+        # Find new path with emergency
+        new_start = next(a for a in airports if a.name == path[1])  # Start from second airport in path
+        new_path = handle_emergency(G, path, emergency_airport, new_start, goal_airport)
+        
+        if new_path:
+            print("New path after emergency:", " -> ".join(new_path))
+            # Visualize with emergency
+            plt2 = visualize_graph(G, new_path, emergency=emergency_airport)
+            plt2.savefig('flight_route_emergency.png')
+        else:
+            print("No alternative path found after emergency!")
     else:
-        print("No path found!")
+        print("No path found from", start_airport.name, "to", goal_airport.name)
+        visualize_graph(G).savefig('flight_route_no_path.png')
 
 if __name__ == "__main__":
     main()
